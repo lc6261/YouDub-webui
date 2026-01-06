@@ -1,0 +1,672 @@
+# -*- coding: utf-8 -*-
+"""
+视频字幕翻译工具 - 全局分析增强版（术语 + 风格 + 上下文）
+支持：OpenAI API, LM Studio, Ollama
+特性：
+  ✅ 全局分析：术语表 + 风格 + 摘要
+  ✅ 强制 JSON 输出（{"translation": "..."}）
+  ✅ 上下文感知（局部 + 全局）
+  ✅ VAD 时长感知长度控制
+  ✅ 严格时间戳对齐
+  ✅ 自动重试 + 回退机制
+  ✅ 详细的翻译统计
+"""
+
+import json
+import os
+import re
+import sys
+import time
+import traceback
+import socket
+from enum import Enum
+from typing import Optional, List, Dict, Any, Tuple
+from openai import OpenAI
+from dotenv import load_dotenv
+from loguru import logger
+
+# 加载环境变量
+load_dotenv()
+
+# === 配置模型类型 ===
+class ModelType(Enum):
+    OPENAI = "openai"
+    LM_STUDIO = "lm_studio"
+    OLLAMA = "ollama"
+
+MODEL_NAME = os.getenv('MODEL_NAME', 'llama3.1:8b').strip()
+API_BASE = os.getenv('OPENAI_API_BASE', '').strip()
+API_KEY = os.getenv('OPENAI_API_KEY', '').strip()
+
+def detect_model_type() -> ModelType:
+    api_base_lower = API_BASE.lower()
+    if not API_BASE:
+        return ModelType.OLLAMA
+    if 'localhost' in api_base_lower or '127.0.0.1' in api_base_lower:
+        if 'lm-studio' in api_base_lower or ':1234' in API_BASE:
+            return ModelType.LM_STUDIO
+        elif 'ollama' in api_base_lower or ':11434' in API_BASE:
+            return ModelType.OLLAMA
+        else:
+            return ModelType.OLLAMA
+    return ModelType.OPENAI
+
+MODEL_TYPE = detect_model_type()
+
+# === 配置客户端 ===
+if MODEL_TYPE == ModelType.OLLAMA:
+    if not API_BASE:
+        API_BASE = 'http://127.0.0.1:11434/v1'
+    if not API_KEY:
+        API_KEY = 'ollama'
+    if 'localhost' in API_BASE.lower():
+        API_BASE = API_BASE.replace('localhost', '127.0.0.1')
+    logger.info(f"✅ 使用Ollama模型: {MODEL_NAME}")
+elif MODEL_TYPE == ModelType.LM_STUDIO:
+    logger.info(f"📦 使用LM Studio模型: {MODEL_NAME}")
+else:
+    logger.info(f"☁️  使用OpenAI兼容API模型: {MODEL_NAME}")
+logger.info(f"🌐 API地址: {API_BASE}")
+
+SPLIT_SENTENCES = False
+CONTEXT_WINDOW = int(os.getenv('CONTEXT_WINDOW', 2))
+logger.info(f"📊 上下文窗口: 前后各 {CONTEXT_WINDOW} 句")
+
+_client: Optional[OpenAI] = None
+
+def create_openai_client() -> OpenAI:
+    timeout = 180.0 if MODEL_TYPE == ModelType.OLLAMA else 120.0
+    return OpenAI(base_url=API_BASE, api_key=API_KEY, timeout=timeout, max_retries=2)
+
+def get_client() -> OpenAI:
+    global _client
+    if _client is None:
+        _client = create_openai_client()
+    return _client
+
+# === 健康检查（略，保持不变）===
+def check_model_health() -> bool:
+    try:
+        port = int(re.search(r':(\d+)', API_BASE).group(1)) if ':' in API_BASE else 11434
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(3)
+            if sock.connect_ex(('127.0.0.1', port)) != 0:
+                logger.error(f"❌ 端口 {port} 未开放")
+                return False
+        logger.info(f"✅ 端口 {port} 开放")
+    except Exception as e:
+        logger.error(f"❌ 端口检查失败: {e}")
+        return False
+
+    import requests
+    test_url = API_BASE.replace('/v1', '/api/tags') if MODEL_TYPE == ModelType.OLLAMA else f"{API_BASE}/models"
+    try:
+        resp = requests.get(test_url, timeout=5)
+        if resp.status_code == 200:
+            logger.info("✅ 模型服务健康")
+            return True
+    except:
+        pass
+    logger.error("❌ 模型服务不可用")
+    return False
+
+def get_necessary_info(info: dict) -> dict:
+    return {k: info.get(k, '') for k in ['title', 'uploader', 'description', 'upload_date', 'categories', 'tags']}
+
+# ✅ 新增：全局分析函数
+def analyze_transcript(transcript: list, target_language: str = '简体中文', max_retries: int = 3) -> dict:
+    full_text = ' '.join(line['text'] for line in transcript)
+    # 截断到 3000 字（平衡上下文与 Ollama 能力）
+    input_text = full_text[:3000]
+    
+    prompt = f"""你是一位专业技术内容分析师。请分析以下视频字幕全文，输出标准 JSON。
+
+要求：
+1. 生成简洁摘要（100字内）
+2. 提取关键术语（英文 → {target_language}），至少5个，优先数学/技术词
+3. 判断语言风格（如“学术讲解”、“轻松科普”、“严谨推导”）
+4. 列出2-3条翻译注意事项（如代词指代、文化特定表达）
+
+字幕全文（节选）:
+{input_text}
+
+输出格式（严格JSON）：
+{{
+  "summary": "摘要文本",
+  "style": "风格描述",
+  "terms": {{"Laplace transform": "拉普拉斯变换", "ODE": "常微分方程"}},
+  "translation_notes": ["注意 'it' 指代系统响应", "避免直译 'elegant'"]
+}}"""
+
+    system_prompt = "你是一位专业的视频内容分析师。"
+    client = get_client()
+    model_params = {
+        'temperature': 0.3,
+        'top_p': 0.9,
+        'frequency_penalty': 0.0,
+        'presence_penalty': 0.0,
+    }
+
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[{"role":"system","content":system_prompt},{"role":"user","content":prompt}],
+                max_tokens=500,
+                timeout=90,
+                **model_params
+            )
+            raw = response.choices[0].message.content.strip()
+            logger.debug(f"🧠 全局分析原始输出: {raw[:200]}...")
+
+            # 安全解析
+            try:
+                data = json.loads(raw)
+            except:
+                # 正则 fallback
+                summary_match = re.search(r'"summary"\s*:\s*"((?:[^"\\]|\\.)*))', raw)
+                style_match = re.search(r'"style"\s*:\s*"((?:[^"\\]|\\.)*))', raw)
+                terms_match = re.search(r'"terms"\s*:\s*(\{[^}]*\})', raw)
+                notes_match = re.search(r'"translation_notes"\s*:\s*(\[[^\]]*\])', raw)
+                
+                data = {
+                    "summary": summary_match.group(1).replace('\\"', '"') if summary_match else "摘要生成失败",
+                    "style": style_match.group(1).replace('\\"', '"') if style_match else "未知风格",
+                    "terms": json.loads(terms_match.group(1).replace('\\"', '"')) if terms_match else {},
+                    "translation_notes": json.loads(notes_match.group(1).replace('\\"', '"')) if notes_match else []
+                }
+
+            # 确保字段存在
+            return {
+                "summary": data.get("summary", "摘要生成失败"),
+                "style": data.get("style", "专业"),
+                "terms": data.get("terms", {}),
+                "translation_notes": data.get("translation_notes", [])
+            }
+        except Exception as e:
+            logger.warning(f"⚠️ 全局分析失败 (第{attempt+1}次): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(3)
+    
+    return {
+        "summary": "全局分析失败",
+        "style": "专业",
+        "terms": {},
+        "translation_notes": []
+    }
+
+# ✅ 增强版 Prompt 构建
+def build_enhanced_prompt(
+    current_text: str,
+    prev_texts: List[str],
+    next_texts: List[str],
+    actual_duration: float,
+    global_analysis: dict,
+    target_language: str = '简体中文'
+) -> str:
+    max_chars = estimate_max_chars(actual_duration)
+    
+    # 构建术语字符串
+    terms = global_analysis.get('terms', {})
+    term_list = [f"{k} → {v}" for k, v in list(terms.items())[:10]]  # 最多10个术语
+    term_str = "；".join(term_list) if term_list else "无特定术语"
+
+    # 构建注意事项
+    notes = global_analysis.get('translation_notes', [])
+    notes_str = "；".join(notes[:3]) if notes else "无特殊注意事项"
+
+    style = global_analysis.get('style', '专业')
+    
+    # 构建上下文
+    context_parts = []
+    for i, text in enumerate(prev_texts, 1):
+        if text: context_parts.append(f"前{i}句: {text}")
+    context_parts.append(f"当前句: {current_text}")
+    for i, text in enumerate(next_texts, 1):
+        if text: context_parts.append(f"后{i}句: {text}")
+    context_str = "\n".join(context_parts)
+
+    return f"""你正在翻译一个{style}风格的视频字幕。请将英文翻译成地道、流畅的{target_language}。
+
+# 全局指导
+- 术语表（必须遵守）: {term_str}
+- 翻译注意事项: {notes_str}
+
+# 翻译要求
+1. 严格输出 JSON: {{"translation": "译文"}}
+2. 译文长度匹配语音（约{actual_duration:.1f}秒），最多{max_chars}个汉字
+3. 使用上述术语表，保持全文一致
+4. 只翻译“当前句”，不要翻译上下文
+
+# 上下文
+{context_str}
+
+请输出 JSON："""
+
+# 保留 estimate_max_chars（略）
+def estimate_max_chars(actual_duration: float) -> int:
+    return max(8, min(120, int(actual_duration * 4.5)))
+
+def get_model_params():
+    return {
+        'temperature': 0.1,
+        'top_p': 0.9,
+        'frequency_penalty': 0.0,
+        'presence_penalty': 0.0,
+    }
+
+# ✅ 修改：支持全局分析
+def _translate_single_with_json_retry(
+    current_text: str,
+    prev_texts: List[str],
+    next_texts: List[str],
+    actual_duration: float,
+    target_language: str,
+    global_analysis: dict,  # ← 新增参数
+    max_retries: int = 3
+) -> Tuple[str, bool]:
+    client = get_client()
+    model_params = get_model_params()
+    system_prompt = "你是一位专业翻译。严格按照JSON格式输出，不要翻译上下文部分。"
+    
+    for attempt in range(max_retries):
+        try:
+            user_prompt = build_enhanced_prompt(
+                current_text, prev_texts, next_texts, actual_duration, global_analysis, target_language
+            )
+            response = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=250,
+                timeout=60,
+                **model_params
+            )
+            raw_output = response.choices[0].message.content.strip()
+            logger.debug(f"🔄 原始输出: {raw_output[:200]}...")
+            
+            # 复用原有解析器
+            translation = safe_json_parse_translation(raw_output)
+            if translation:
+                logger.debug(f"✅ 解析成功: {translation[:100]}...")
+                return translation, True
+            else:
+                logger.warning(f"⚠️ JSON解析失败 (第{attempt+1}次): {raw_output[:100]}...")
+        except Exception as e:
+            logger.warning(f"⚠️ 请求失败 (第{attempt+1}次): {e}")
+        if attempt < max_retries - 1:
+            time.sleep(1.5)
+    
+    return current_text, False
+
+# ✅ 主翻译函数：传入全局分析
+def _translate_with_analysis(
+    summary: dict,
+    transcript: list,
+    global_analysis: dict,
+    target_language: str = '简体中文'
+) -> tuple:
+    total_lines = len(transcript)
+    logger.info(f"📊 开始翻译（含全局分析），共 {total_lines} 句")
+    
+    full_translation = []
+    success_flags = []
+
+    for idx, line in enumerate(transcript):
+        text = line.get('text', '').strip()
+        if not text:
+            full_translation.append("")
+            success_flags.append(False)
+            continue
+
+        prev_texts = [transcript[i].get('text', '') for i in range(max(0, idx-CONTEXT_WINDOW), idx)]
+        next_texts = [transcript[i].get('text', '') for i in range(idx+1, min(len(transcript), idx+CONTEXT_WINDOW+1))]
+
+        original_duration = float(line.get('end', 0)) - float(line.get('start', 0))
+        vad_duration = line.get('vad_duration')
+        actual_duration = min(float(vad_duration), original_duration) if vad_duration is not None else original_duration
+
+        progress = (idx + 1) / total_lines * 100
+        logger.info(f"📈 进度: {idx+1}/{total_lines} ({progress:.1f}%) ({actual_duration:.1f}s) - {text[:60]}...")
+
+        translation, success = _translate_single_with_json_retry(
+            current_text=text,
+            prev_texts=prev_texts,
+            next_texts=next_texts,
+            actual_duration=actual_duration,
+            target_language=target_language,
+            global_analysis=global_analysis,  # 传入全局分析
+            max_retries=3
+        )
+        
+        full_translation.append(translation)
+        success_flags.append(success)
+        
+        logger.info(f"📖 [{idx+1:3d}] 原文: {text}")
+        logger.info(f"💬 译文: {translation}")
+        logger.info(f"     时长: {actual_duration:.1f}s | 状态: {'✅' if success else '❌'}")
+        logger.info("-" * 60)
+        
+        if MODEL_TYPE == ModelType.OLLAMA:
+            time.sleep(0.3)
+        else:
+            time.sleep(0.1)
+
+    return full_translation, success_flags
+
+# === 以下函数保持不变 ===
+def safe_json_parse_translation(intext: str) -> str:
+    if not intext:
+        return ""
+    text = intext.replace('”}', '"}').replace('“}', '"}').replace('”]', '"]').replace('“]', '"]')
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict) and 'translation' in data:
+            return str(data['translation']).strip()
+    except:
+        pass
+    json_match = re.search(r'\{[^{}]*"translation"[^{}]*"[^"]*"[^{}]*\}', text)
+    if json_match:
+        json_str = json_match.group(0)
+        try:
+            data = json.loads(json_str)
+            if 'translation' in data:
+                return str(data['translation']).strip()
+        except:
+            pass
+    trans_match = re.search(r'"translation"\s*:\s*"((?:[^"\\]|\\.)*))', text)
+    if trans_match:
+        extracted = trans_match.group(1)
+        extracted = extracted.replace('\\"', '"').replace('\\', '')
+        return extracted.strip()
+    start_pos = text.find('"translation"')
+    if start_pos != -1:
+        brace_start = text.rfind('{', 0, start_pos)
+        if brace_start != -1:
+            brace_count = 0
+            for i, char in enumerate(text[brace_start:], brace_start):
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        potential_json = text[brace_start:i+1]
+                        try:
+                            data = json.loads(potential_json)
+                            if 'translation' in data:
+                                return str(data['translation']).strip()
+                        except:
+                            pass
+    return ""
+
+def translation_postprocess(result: str) -> str:
+    if not result:
+        return ""
+    result = re.sub(r'\（[^)]*\）', '', result)
+    result = re.sub(r'\([^)]*\)', '', result)
+    result = result.replace('...', '，').replace('..', '，')
+    result = re.sub(r'(?<=\d),(?=\d)', '', result)
+    result = result.replace('？', '?').replace('！', '!')
+    replacements = {
+        '²': '的平方', '————': '：', '——': '：', '°': '度',
+        'AI': '人工智能', 'transformer': 'Transformer', 'GPT': 'GPT',
+        'LLM': '大语言模型', '\u200b': '', '\ufeff': '',
+    }
+    for old, new in replacements.items():
+        result = result.replace(old, new)
+    return re.sub(r'\s+', ' ', result).strip()
+
+# ... [其余函数保持不变：split_text_into_sentences, split_sentences_fixed, fix_timestamps, validate_time_alignment, print_translation_preview] ...
+
+def split_text_into_sentences(para: str) -> List[str]:
+    if not para: return [para] if para else []
+    sentences = re.split(r'(?<=[。！？?!\.])\s+', para)
+    return [s.strip() for s in sentences if s.strip()] or [para.strip()]
+
+def split_sentences_fixed(translation: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    output_data = []
+    for item in translation:
+        try:
+            original_start = float(item.get('start', 0))
+            original_end = float(item.get('end', 0))
+            text = item.get('text', '')
+            speaker = item.get('speaker', '')
+            translation_text = item.get('translation', '').strip()
+            if not translation_text:
+                continue
+            sentences = split_text_into_sentences(translation_text)
+            if len(sentences) <= 1:
+                output_data.append({
+                    "start": round(original_start, 3),
+                    "end": round(original_end, 3),
+                    "text": text,
+                    "speaker": speaker,
+                    "translation": translation_text if sentences else ""
+                })
+                continue
+            total_sentences = len(sentences)
+            original_duration = original_end - original_start
+            duration_per_sentence = (original_duration / total_sentences) if original_duration > 0 else 1.0 / total_sentences
+            current_time = original_start
+            for i, sentence in enumerate(sentences):
+                if not sentence: continue
+                end_time = original_end if i == total_sentences - 1 else current_time + duration_per_sentence
+                end_time = min(end_time, original_end)
+                if end_time <= current_time:
+                    end_time = current_time + 0.01
+                output_data.append({
+                    "start": round(current_time, 3),
+                    "end": round(end_time, 3),
+                    "text": text,
+                    "speaker": speaker,
+                    "translation": sentence
+                })
+                current_time = end_time
+        except Exception as e:
+            logger.error(f"❌ 句子拆分出错: {e}")
+            output_data.append({
+                "start": round(original_start, 3),
+                "end": round(original_end, 3),
+                "text": text,
+                "speaker": speaker,
+                "translation": translation_text
+            })
+    return output_data
+
+def fix_timestamps(original: List[Dict[str, Any]], translated: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not original: return translated
+    key_map = {(item['text'], item.get('speaker', '')): (item['start'], item['end']) for item in original}
+    fixed = []
+    for item in translated:
+        key = (item['text'], item.get('speaker', ''))
+        start, end = key_map.get(key, (item.get('start', 0), item.get('end', 0)))
+        fixed.append({
+            "start": round(float(start), 3),
+            "end": round(float(end), 3),
+            "text": item["text"],
+            "speaker": item.get("speaker", ""),
+            "translation": item.get("translation", item["text"])
+        })
+    return fixed
+
+def validate_time_alignment(original: List[Dict[str, Any]], translated: List[Dict[str, Any]]) -> bool:
+    if len(original) != len(translated):
+        logger.warning(f"❌ 条目数量不匹配: {len(original)} vs {len(translated)}")
+        return False
+    for i, (orig, trans) in enumerate(zip(original, translated)):
+        os, oe = round(float(orig['start']), 3), round(float(orig['end']), 3)
+        ts, te = round(float(trans['start']), 3), round(float(trans['end']), 3)
+        if abs(os - ts) > 0.001 or abs(oe - te) > 0.001:
+            logger.warning(f"⚠️ 时间戳不匹配 {i}: {os}-{oe} vs {ts}-{te}")
+            return False
+    logger.info("✅ 时间戳完全一致")
+    return True
+
+def print_translation_preview(translated_data: List[Dict[str, Any]], num_lines: int = 10):
+    logger.info(f"\n🔍 翻译结果预览（前 {num_lines} 条）:")
+    logger.info("="*80)
+    for i, item in enumerate(translated_data[:num_lines]):
+        start_time = item.get('start', 0)
+        end_time = item.get('end', 0)
+        original_text = item.get('text', '')
+        translated_text = item.get('translation', '')
+        
+        logger.info(f"[{i+1:2d}] {start_time:.1f}s - {end_time:.1f}s")
+        logger.info(f"     原文: {original_text}")
+        logger.info(f"     译文: {translated_text}")
+        logger.info("-" * 80)
+    logger.info(f"✅ 共 {len(translated_data)} 条翻译完成")
+
+# === 主流程：集成全局分析 ===
+def translate(folder: str, target_language: str = '简体中文') -> bool:
+    try:
+        translation_path = os.path.join(folder, 'translation.json')
+        if os.path.exists(translation_path):
+            logger.info(f"📂 已存在翻译，跳过: {folder}")
+            return True
+
+        info_path = os.path.join(folder, 'download.info.json')
+        transcript_path = os.path.join(folder, 'transcript.json')
+        if not os.path.exists(info_path) or not os.path.exists(transcript_path):
+            logger.error(f"❌ 缺少必要文件")
+            return False
+
+        with open(info_path, 'r', encoding='utf-8') as f:
+            info = get_necessary_info(json.load(f))
+        with open(transcript_path, 'r', encoding='utf-8') as f:
+            original_transcript = json.load(f)
+        logger.info(f"📄 加载了 {len(original_transcript)} 条原始字幕")
+
+        # 🔥 新增：全局分析
+        analysis_path = os.path.join(folder, 'analysis.json')
+        if os.path.exists(analysis_path):
+            try:
+                with open(analysis_path, 'r', encoding='utf-8') as f:
+                    global_analysis = json.load(f)
+                logger.info("🧠 加载全局分析结果")
+            except:
+                global_analysis = analyze_transcript(original_transcript, target_language)
+                with open(analysis_path, 'w', encoding='utf-8') as f:
+                    json.dump(global_analysis, f, indent=2, ensure_ascii=False)
+        else:
+            global_analysis = analyze_transcript(original_transcript, target_language=target_language)
+            with open(analysis_path, 'w', encoding='utf-8') as f:
+                json.dump(global_analysis, f, indent=2, ensure_ascii=False)
+            logger.info("🔍 全局分析完成")
+
+        # 摘要可复用 analysis 中的 summary
+        summary = {
+            'title': info.get('title', ''),
+            'author': info.get('uploader', ''),
+            'summary': global_analysis.get('summary', '摘要生成失败'),
+            'tags': info.get('tags', []),
+            'language': target_language,
+            'model_type': MODEL_TYPE.value
+        }
+        # 保存摘要（兼容旧逻辑）
+        summary_path = os.path.join(folder, 'summary.json')
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+
+        # 🔥 使用增强翻译
+        logger.info("🚀 开始智能翻译（含全局分析）...")
+        translations, success_flags = _translate_with_analysis(
+            summary, original_transcript, global_analysis, target_language
+        )
+
+        # 构建结果（后续保持不变）
+        working_transcript = []
+        for i, line in enumerate(original_transcript):
+            trans_text = translations[i] if i < len(translations) else line.get('text', '')
+            working_transcript.append({
+                "start": float(line.get('start', 0)),
+                "end": float(line.get('end', 0)),
+                "text": line.get('text', ''),
+                "speaker": line.get('speaker', ''),
+                "translation": translation_postprocess(trans_text)
+            })
+
+        if SPLIT_SENTENCES:
+            final_transcript = split_sentences_fixed(working_transcript)
+        else:
+            final_transcript = working_transcript
+
+        final_transcript = fix_timestamps(original_transcript, final_transcript)
+        validate_time_alignment(original_transcript, final_transcript)
+
+        with open(translation_path, 'w', encoding='utf-8') as f:
+            json.dump(final_transcript, f, indent=2, ensure_ascii=False)
+        logger.info(f"✅ 翻译完成: {translation_path}")
+
+        print_translation_preview(final_transcript, num_lines=10)
+
+        total = len(success_flags)
+        success_count = sum(success_flags)
+        stats = {
+            'total_lines': total,
+            'success_count': success_count,
+            'failure_count': total - success_count,
+            'success_rate': round(100 * success_count / total, 2) if total else 0,
+            'failed_lines': [
+                {'index': i, 'start': line['start'], 'end': line['end'], 'text': line['text'][:200]}
+                for i, (line, ok) in enumerate(zip(original_transcript, success_flags)) if not ok
+            ]
+        }
+        with open(os.path.join(folder, 'translation_stats.json'), 'w', encoding='utf-8') as f:
+            json.dump(stats, f, indent=2, ensure_ascii=False)
+        logger.info(f"📊 成功率: {stats['success_rate']:.1f}% ({success_count}/{total})")
+
+        return True
+    except Exception as e:
+        logger.error(f"❌ 翻译失败: {e}")
+        logger.error(traceback.format_exc())
+        return False
+
+# ... [其余函数保持不变：translate_all_transcript_under_folder, __main__] ...
+
+def translate_all_transcript_under_folder(root_folder: str, target_language: str = '简体中文') -> int:
+    if not check_model_health():
+        return 0
+    video_folders = [
+        root for root, _, files in os.walk(root_folder)
+        if 'transcript.json' in files and 'translation.json' not in files
+    ]
+    logger.info(f"🎯 找到 {len(video_folders)} 个需要翻译的视频")
+    if not video_folders:
+        logger.info("✅ 所有视频都已翻译完成")
+        return 0
+
+    count = 0
+    for i, folder in enumerate(video_folders):
+        logger.info(f"\n{'='*60}")
+        logger.info(f"🎬 处理视频 ({i+1}/{len(video_folders)}): {folder}")
+        if translate(folder, target_language):
+            count += 1
+            logger.info("✅ 完成")
+        else:
+            logger.error("❌ 失败")
+        if i < len(video_folders) - 1:
+            time.sleep(1)
+    logger.info(f"\n🏁 共成功翻译 {count} 个视频")
+    return count
+
+if __name__ == '__main__':
+    logger.remove()
+    logger.add(sys.stderr, level="INFO", format="<green>{time:MM-DD HH:mm:ss}</green> | <level>{level: <6}</level> | <cyan>{message}</cyan>")
+    logger.add("translation.log", level="DEBUG", rotation="10 MB", retention="7 days", encoding="utf-8")
+
+    print("\n" + "="*60)
+    print("🎬 视频字幕翻译工具 - 全局分析增强版")
+    print("="*60)
+    logger.info(f"📦 模型: {MODEL_TYPE.value} | {MODEL_NAME}")
+    logger.info(f"🌐 API: {API_BASE}")
+    logger.info(f"🔧 句子拆分: {'启用' if SPLIT_SENTENCES else '禁用'}")
+    logger.info(f"📊 上下文窗口: 前后各 {CONTEXT_WINDOW} 句")
+
+    success_count = translate_all_transcript_under_folder('videos', '简体中文')
+    if success_count:
+        logger.info(f"🎉 成功翻译 {success_count} 个视频")
+    else:
+        logger.info("ℹ️  无新视频或全部失败")

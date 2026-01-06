@@ -1,0 +1,16 @@
+# config_balanced.yaml
+
+translation:
+  engine: "qwen2.5"
+  model: "qwen2.5:14b"
+  multi_pass: true
+  quality_check: true
+
+tts:
+  engine: "cosyvoice"  # 或 gptsovits（降低质量设置）
+  reference_audio: "auto"
+  fast_mode: true
+
+hardware:
+  gpu_memory: "12GB"
+  recommended: "RTX 3060 12GB, RTX 4060 Ti"
