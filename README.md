@@ -1,218 +1,353 @@
-
 # YouDub-webui: 优质视频中文化工具
 ## 目录
 - [YouDub-webui: 优质视频中文化工具](#youdub-webui-优质视频中文化工具)
   - [目录](#目录)
   - [简介](#简介)
   - [主要特点](#主要特点)
-  - [安装与使用指南](#安装与使用指南)
-    - [1. 克隆仓库](#1-克隆仓库)
-    - [2. 安装依赖](#2-安装依赖)
-      - [自动安装](#自动安装)
-      - [手动安装](#手动安装)
-    - [3. 环境设置](#3-环境设置)
-    - [4. 运行程序](#4-运行程序)
-      - [自动运行](#自动运行)
-      - [手动运行](#手动运行)
-  - [使用步骤](#使用步骤)
-    - [1. **全自动 (Do Everything)**](#1-全自动-do-everything)
-    - [2. **下载视频 (Download Video)**](#2-下载视频-download-video)
-    - [3. **人声分离 (Demucs Interface)**](#3-人声分离-demucs-interface)
-    - [4. **语音识别 (Whisper Inference)**](#4-语音识别-whisper-inference)
-    - [5. **字幕翻译 (Translation Interface)**](#5-字幕翻译-translation-interface)
-    - [6. **语音合成 (TTS Interface)**](#6-语音合成-tts-interface)
-    - [7. **视频合成 (Synthesize Video Interface)**](#7-视频合成-synthesize-video-interface)
+  - [项目结构](#项目结构)
+  - [安装与配置指南](#安装与配置指南)
+    - [1. 环境要求](#1-环境要求)
+    - [2. 克隆仓库](#2-克隆仓库)
+    - [3. 安装依赖](#3-安装依赖)
+    - [4. 环境配置](#4-环境配置)
+  - [快速开始](#快速开始)
+    - [1. 启动程序](#1-启动程序)
+    - [2. 基本使用流程](#2-基本使用流程)
+  - [批量处理功能](#批量处理功能)
+    - [1. tasks.csv 文件格式](#1-tasks-csv-文件格式)
+    - [2. 创建和编辑 tasks.csv](#2-创建和编辑-taskscsv)
+    - [3. 运行批量处理](#3-运行批量处理)
+    - [4. 检测任务完成情况](#4-检测任务完成情况)
+    - [5. 从现有视频重建任务](#5-从现有视频重建任务)
+  - [任务类型说明](#任务类型说明)
+    - [1. download_only (仅下载)](#1-download_only-仅下载)
+    - [2. full_process (完整处理)](#2-full_process-完整处理)
+  - [处理流程详解](#处理流程详解)
+    - [步骤 0: 视频下载](#步骤-0-视频下载)
+    - [步骤 1: 音频分离](#步骤-1-音频分离)
+    - [步骤 2: 语音识别](#步骤-2-语音识别)
+    - [步骤 3: 字幕翻译](#步骤-3-字幕翻译)
+    - [步骤 4: 语音合成](#步骤-4-语音合成)
+    - [步骤 5: 视频合成](#步骤-5-视频合成)
+    - [步骤 6: 生成视频信息](#步骤-6-生成视频信息)
+    - [步骤 7: 上传 Bilibili](#步骤-7-上传-bilibili)
+  - [常见问题与解决方案](#常见问题与解决方案)
   - [技术细节](#技术细节)
-    - [AI 语音识别](#ai-语音识别)
-    - [大型语言模型翻译](#大型语言模型翻译)
-    - [AI 声音克隆](#ai-声音克隆)
-    - [视频处理](#视频处理)
   - [贡献指南](#贡献指南)
   - [许可协议](#许可协议)
   - [支持与联系方式](#支持与联系方式)
 
 ## 简介
-`YouDub-webui` 是 [`YouDub`](https://github.com/liuzhao1225/YouDub) 项目的网页交互版本，基于 `Gradio` 构建，为用户提供简易操作界面来访问和使用 [`YouDub`](https://github.com/liuzhao1225/YouDub) 的强大功能。[`YouDub`](https://github.com/liuzhao1225/YouDub) 是一个开创性的开源工具，旨在将 YouTube 和其他平台上的高质量视频翻译和配音成中文版本。该工具结合了最新的 AI 技术，包括语音识别、大型语言模型翻译，以及 AI 声音克隆技术，提供与原视频相似的中文配音，为中文用户提供卓越的观看体验。
+`YouDub-webui` 是一个强大的视频中文化工具，能够将 YouTube 和其他平台上的高质量视频翻译和配音成中文版本。该工具结合了最新的 AI 技术，包括语音识别、大型语言模型翻译，以及 AI 声音克隆技术，提供与原视频相似的中文配音，为中文用户提供卓越的观看体验。
 
-`YouDub-webui` 适用于多种场景，包括教育、娱乐和专业翻译，特别适合那些希望将国外优秀视频内容本地化的用户。此工具的简洁界面使得即使是非技术用户也能轻松上手，实现视频的快速中文化处理。
-
-了解更多关于 `YouDub-webui` 的信息和示例，请访问我们的 [bilibili 视频主页](https://space.bilibili.com/1263732318)。为了更好地服务社区，我们也设立了微信群组，欢迎通过扫描下方的[二维码](#支持与联系方式)加入我们，共同探讨和贡献于 `YouDub-webui` 的发展。
-
-
-当然，我将重新撰写 `YouDub-webui` 的主要特点部分。
-
----
+`YouDub-webui` 适用于多种场景，包括教育、娱乐和专业翻译，特别适合那些希望将国外优秀视频内容本地化的用户。此工具的简洁界面和批量处理功能使得即使是非技术用户也能轻松上手，实现视频的快速中文化处理。
 
 ## 主要特点
-`YouDub-webui` 融合了多项先进技术，提供了一套完整的视频中文化工具包，其主要特点包括：
+- **视频下载**: 支持通过链接直接下载 YouTube 视频，包括单个视频、播放列表和频道。
+- **批量处理**: 通过 `tasks.csv` 文件实现多视频批量处理，支持不同处理类型。
+- **任务管理**: 提供任务完成检测和任务重建功能，方便管理大量视频处理任务。
+- **AI 语音识别**: 利用先进的 WhisperX 技术，将视频中的语音高效转换为文字，并支持说话者分离。
+- **大型语言模型翻译**: 结合大型语言模型实现快速且精准的中文翻译，支持多种翻译模型。
+- **AI 声音克隆**: 通过 AI 声音克隆技术，生成与原视频配音相似的中文语音，保留原视频的情感和语调特色。
+- **视频处理**: 综合了音视频同步处理、字幕添加、视频播放速度调整和帧率设置等多项功能。
+- **自动上传**: 支持将最终视频自动上传到 Bilibili 平台。
 
-- **视频下载**: 支持通过链接直接下载 YouTube 视频。无论是单个视频、播放列表还是频道内的多个视频，均能轻松下载。
-- **AI 语音识别**: 利用先进的 AI 技术，将视频中的语音高效转换为文字。不仅提供精确的语音到文本转换，还能自动对齐时间并识别不同说话者，极大地增强了信息的丰富性和准确性。
-- **大型语言模型翻译**: 结合大型语言模型如 GPT，实现快速且精准的中文翻译。无论是俚语还是专业术语，均能得到恰当的翻译，确保内容的准确性与地道性。
-- **AI 声音克隆**: 通过 AI 声音克隆技术，生成与原视频配音相似的中文语音。这不仅提升了视频的观看体验，也保留了原视频的情感和语调特色。
-- **视频处理**: 综合了音视频同步处理、字幕添加、视频播放速度调整和帧率设置等多项功能。用户可以根据需要生成高质量的最终视频，实现无缝的观看体验。
-- **自动上传**: 支持将最终视频自动上传到 Bilibili 平台。用户可以在不离开 `YouDub-webui` 的情况下，将视频上传到 Bilibili 平台，实现一键式的视频中文化处理。
-
-`YouDub-webui` 的这些特点使其成为一个强大且易于使用的视频中文化工具，无论是个人用户还是专业团队，都能从中受益。
-
-
-## 安装与使用指南
-
-为了使用 `YouDub-webui`，请遵循以下步骤来安装和配置您的环境：
-
-### 1. 克隆仓库
-首先，克隆 `YouDub-webui` 仓库到您的本地系统：
-```bash
-git clone https://github.com/liuzhao1225/YouDub-webui.git
+## 项目结构
+```
+YouDub-webui/
+├── YouDub-webui.26.1.4.7z          # 项目压缩包
+├── YouDub-webui.7z                  # 项目压缩包
+├── CosyVoice/                       # CosyVoice 语音合成模型
+├── GPT-SoVITS/                      # GPT-SoVITS 语音合成模型
+├── gpt_sovits_workspace/            # GPT-SoVITS 工作空间
+├── logs/                            # 日志文件目录
+├── models/                          # 模型文件目录
+├── test_tts_output/                 # TTS 测试输出目录
+├── test_video_folder/               # 测试视频文件夹
+├── verify/                          # 验证脚本目录
+├── videos/                          # 视频输出目录
+├── voice/                           # 语音克隆样本目录
+├── whisper.cpp/                     # Whisper C++ 实现
+├── youdub/                          # 核心功能模块
+│   ├── run_pipeline.py              # 处理管道主程序
+│   ├── step000_video_downloader_csv.py # 视频下载模块
+│   └── ...                          # 其他处理步骤模块
+├── .env                             # 环境配置文件
+├── .env.example                     # 环境配置示例
+├── .gitignore                       # Git 忽略文件
+├── app.py                           # WebUI 主程序
+├── check_tasks_completion.py        # 任务完成检测脚本
+├── config_balanced.yaml             # 配置文件
+├── cookies.txt                      # 浏览器 cookies 文件
+├── recreate_tasks.py                # 任务重建脚本
+├── requirements.txt                 # 依赖清单
+├── run_windows.bat                  # Windows 启动脚本
+├── setup_windows.bat                # Windows 安装脚本
+├── start_cmd.bat                    # 命令行启动脚本
+└── tasks.csv                        # 批量任务配置文件
 ```
 
-### 2. 安装依赖
-您可以选择自动安装或手动安装依赖：
+## 安装与配置指南
+### 1. 环境要求
+- **操作系统**: Windows 10/11
+- **Python 版本**: Python 3.10 或更高版本
+- **硬件要求**: 
+  - CPU: 至少 4 核
+  - GPU: NVIDIA GPU (推荐，用于加速 AI 处理)
+  - 内存: 至少 8GB RAM
+  - 存储空间: 至少 50GB 可用空间
 
-#### 自动安装
-- 进入 `YouDub-webui` 目录，运行 `setup_windows` 脚本。
-- 脚本会在当前目录创建一个 `venv` 虚拟环境，并自动安装所需依赖，包括 CUDA 12.1 版本的 PyTorch。
+### 2. 克隆仓库
+1. 安装 Git: 从 [Git 官网](https://git-scm.com/) 下载并安装 Git
+2. 打开命令提示符 (CMD) 或 PowerShell
+3. 运行以下命令克隆仓库:
+   ```bash
+   git clone https://github.com/liuzhao1225/YouDub-webui.git
+   cd YouDub-webui
+   ```
+
+### 3. 安装依赖
+#### 自动安装 (推荐小白使用)
+1. 双击运行 `setup_windows.bat` 文件
+2. 脚本会自动创建虚拟环境并安装所有依赖
+3. 安装过程可能需要几分钟，请耐心等待
 
 #### 手动安装
-- 进入 `YouDub-webui` 目录，使用以下命令安装依赖：
-  ```bash
-  cd YouDub-webui
-  pip install -r requirements.txt
-  ```
-- 由于 TTS 依赖的特殊性，所以将 TTS 移出了 `requirements.txt`，需要手动安装：
-  ```bash
-  pip install TTS
-  ```
-- 默认安装为 CPU 版本的 PyTorch 如果你需要手动安装特定 CUDA 版本的 PyTorch，可根据您的 CUDA 版本从 [PyTorch 官方网站](https://pytorch.org/) 获取安装命令。
+1. 打开命令提示符，进入项目目录
+2. 创建虚拟环境:
+   ```bash
+   python -m venv venv
+   ```
+3. 激活虚拟环境:
+   ```bash
+   venv\Scripts\activate
+   ```
+4. 安装基础依赖:
+   ```bash
+   pip install -r requirements.txt
+   ```
+5. 安装 TTS 依赖:
+   ```bash
+   pip install TTS
+   ```
 
-### 3. 环境设置
-在运行前，请配置环境变量：
+### 4. 环境配置
+1. 将 `.env.example` 文件复制一份并重命名为 `.env`
+2. 编辑 `.env` 文件，填写所需的环境变量:
+   - `OPENAI_API_KEY`: OpenAI API 密钥 (可选，用于翻译)
+   - `MODEL_NAME`: 翻译模型名称，如 'gpt-4' 或 'gpt-3.5-turbo'
+   - `HF_TOKEN`: Hugging Face token (用于说话者分离功能)
+   - `APPID` 和 `ACCESS_TOKEN`: 火山引擎 TTS 凭据 (可选)
+   - `BILI_BASE64`: Bilibili 上传凭据 (可选，用于自动上传)
 
-- **环境变量配置**：将 `.env.example` 改名为 `.env` 并填入以下环境变量：
-  - `OPENAI_API_KEY`: OpenAI API 密钥，格式通常为 `sk-xxx`。
-  - `MODEL_NAME`: 模型名称，如 'gpt-4' 或 'gpt-3.5-turbo'。
-  - `OPENAI_API_BASE`: OpenAI API 基础 URL，如果使用自己部署的模型，请填入。
-  - `HF_TOKEN`: Hugging Face token，用于 speaker diarization 功能。
-  - `HF_ENDPOINT`: 如果从 `huggingface` 下载模型时出错，可以添加此环境变量。
-  - `APPID` 和 `ACCESS_TOKEN`: 火山引擎 TTS 所需的凭据。
-  - `BILI_BASE64`: Bilibili API 所需的凭据。获取方法请参考 [bilibili-toolman 准备凭据](https://github.com/mos9527/bilibili-toolman?tab=readme-ov-file#%E5%87%86%E5%A4%87%E5%87%AD%E6%8D%AE)。
+## 快速开始
+### 1. 启动程序
+#### 方式一: WebUI (推荐小白使用)
+1. 双击运行 `run_windows.bat` 文件
+2. 等待程序启动，会自动打开浏览器
+3. 在浏览器中使用 WebUI 进行操作
 
-### 4. 运行程序
-选择以下任一方式运行程序：
+#### 方式二: 命令行
+1. 打开命令提示符，进入项目目录
+2. 激活虚拟环境:
+   ```bash
+   venv\Scripts\activate
+   ```
+3. 启动 WebUI:
+   ```bash
+   python app.py
+   ```
+4. 在浏览器中访问显示的 URL (通常是 http://127.0.0.1:7860)
 
-#### 自动运行
-- 在 `YouDub-webui` 目录下运行 `run_windows.bat`。
+### 2. 基本使用流程
+1. 在 WebUI 中选择 "全自动 (Do Everything)" 选项卡
+2. 填写视频 URL、输出目录等参数
+3. 点击 "Run" 按钮开始处理
+4. 等待处理完成，查看输出视频
 
-#### 手动运行
-- 使用以下命令启动主程序：
-  ```bash
-  python app.py
-  ```
+## 批量处理功能
+### 1. tasks.csv 文件格式
+`tasks.csv` 是批量处理的核心配置文件，包含以下字段:
 
-## 使用步骤
+| 字段名 | 说明 | 示例值 |
+|-------|------|--------|
+| url | 视频 URL | https://www.youtube.com/shorts/ieW8-Qjs5rU |
+| resolution | 视频分辨率 | 1080p |
+| mode | 处理模式 | all |
+| status | 任务状态 | pending, processing, completed |
+| title | 视频标题 | Look at the genius idea he had with this tree |
+| duration | 视频时长 (秒) | 60 |
+| video_id | 视频 ID | ieW8-Qjs5rU |
+| publish_date | 发布日期 | 20251114 |
+| uploader | 上传者 | Alex Demuner |
+| progress | 处理进度 |  |
+| start_time | 开始时间 |  |
+| end_time | 结束时间 |  |
+| output_path | 输出路径 | videos\Alex Demuner\20251114... |
+| error_message | 错误信息 |  |
+| task_type | 任务类型 | download_only, full_process |
+| steps | 执行步骤 | 0 (仅下载), 0,1,2,3,4,5,6,7 (完整处理) |
 
-### 1. **全自动 (Do Everything)**
+### 2. 创建和编辑 tasks.csv
+#### 方式一: 手动编辑
+1. 使用文本编辑器 (如 Notepad++) 打开 `tasks.csv`
+2. 按照上述格式添加或修改任务
+3. 保存文件
 
-此界面是一个一站式的解决方案，它将执行从视频下载到视频合成的所有步骤。
+#### 方式二: 使用 WebUI
+1. 在 WebUI 中处理一个视频
+2. 处理完成后，会自动更新 `tasks.csv` 文件
 
-- **Root Folder**: 设置视频文件的根目录。
-- **Video URL**: 输入视频或播放列表或频道的URL。
-- **Number of videos to download**: 设置要下载的视频数量。
-- **Resolution**: 选择下载视频的分辨率。
-- **Demucs Model**: 选择用于音频分离的Demucs模型。
-- **Demucs Device**: 选择音频分离的处理设备。
-- **Number of shifts**: 设置音频分离时的移位数。
-- **Whisper Model**: 选择用于语音识别的Whisper模型。
-- **Whisper Download Root**: 设置Whisper模型的下载根目录。
-- **Whisper Batch Size**: 设置Whisper处理的批量大小。
-- **Whisper Diarization**: 选择是否进行说话者分离。
-- **Translation Target Language**: 选择字幕的目标翻译语言。
-- **Force Bytedance**: 选择是否强制使用Bytedance语音合成。
-- **Subtitles**: 选择是否在视频中包含字幕。
-- **Speed Up**: 设置视频播放速度。
-- **FPS**: 设置视频的帧率。
-- **Max Workers**: 设置处理任务的最大工作线程数。
-- **Max Retries**: 设置任务失败后的最大重试次数。
-- **Auto Upload Video**: 选择是否自动上传视频到Bilibili。
+### 3. 运行批量处理
+1. 打开命令提示符，进入项目目录
+2. 激活虚拟环境:
+   ```bash
+   venv\Scripts\activate
+   ```
+3. 运行处理管道:
+   ```bash
+   python -m youdub.run_pipeline --use-task-steps
+   ```
+4. 程序会自动读取 `tasks.csv` 并处理所有待处理任务
 
-### 2. **下载视频 (Download Video)**
+### 4. 检测任务完成情况
+使用 `check_tasks_completion.py` 脚本可以检测所有任务的实际完成情况:
 
-此界面用于单独下载视频。
+1. 打开命令提示符，进入项目目录
+2. 激活虚拟环境:
+   ```bash
+   venv\Scripts\activate
+   ```
+3. 运行检测脚本:
+   ```bash
+   python check_tasks_completion.py
+   ```
+4. 查看输出结果，了解每个任务的实际状态
 
-- **Video URL**: 输入视频或播放列表或频道的URL。
-- **Output Folder**: 设置视频下载后的输出文件夹。
-- **Resolution**: 选择下载视频的分辨率。
-- **Number of videos to download**: 设置要下载的视频数量。
+### 5. 从现有视频重建任务
+如果 `tasks.csv` 文件丢失或损坏，可以使用 `recreate_tasks.py` 脚本从现有视频文件重建:
 
-### 3. **人声分离 (Demucs Interface)**
+1. 打开命令提示符，进入项目目录
+2. 激活虚拟环境:
+   ```bash
+   venv\Scripts\activate
+   ```
+3. 运行重建脚本:
+   ```bash
+   python recreate_tasks.py
+   ```
+4. 程序会扫描 `videos` 目录并重建 `tasks.csv` 文件
 
-此界面用于从视频中分离人声。
+## 任务类型说明
+### 1. download_only (仅下载)
+- **功能**: 仅下载视频文件，不进行后续处理
+- **适用场景**: 只想保存视频，不需要翻译和配音
+- **输出文件**: 
+  - `download.mp4` (视频文件)
+  - `download.info.json` (视频信息)
+  - `download.webp` (视频缩略图)
 
-- **Folder**: 设置包含视频的文件夹。
-- **Model**: 选择用于音频分离的Demucs模型。
-- **Device**: 选择音频分离的处理设备。
-- **Progress Bar in Console**: 选择是否在控制台显示进度条。
-- **Number of shifts**: 设置音频分离时的移位数。
+### 2. full_process (完整处理)
+- **功能**: 执行完整的处理流程，包括下载、音频分离、语音识别、翻译、TTS、视频合成等
+- **适用场景**: 需要将视频完整翻译和配音成中文
+- **输出文件**: 
+  - 下载阶段文件 (同上)
+  - `audio.wav` (分离的音频)
+  - `transcript.json` (语音识别结果)
+  - `translation.json` (翻译结果)
+  - `subtitles.srt` (字幕文件)
+  - `video.mp4` (最终合成视频)
 
-### 4. **语音识别 (Whisper Inference)**
+## 处理流程详解
+### 步骤 0: 视频下载
+- **功能**: 从视频 URL 下载视频文件
+- **模块**: `step000_video_downloader_csv.py`
+- **输出**: `download.mp4`, `download.info.json`, `download.webp`
 
-此界面用于从视频音频中进行语音识别。
+### 步骤 1: 音频分离
+- **功能**: 将视频中的人声与背景音乐分离
+- **模块**: `step010_demucs_vr.py`
+- **输出**: 分离后的音频文件
 
-- **Folder**: 设置包含视频的文件夹。
-- **Model**: 选择用于语音识别的Whisper模型。
-- **Download Root**: 设置Whisper模型的下载根目录。
-- **Device**: 选择语音识别的处理设备。
-- **Batch Size**: 设置Whisper处理的批量大小。
-- **Diarization**: 选择是否进行说话者分离。
+### 步骤 2: 语音识别
+- **功能**: 将分离的人声转换为文本
+- **模块**: `step020_whisperx_silero_vad.py`
+- **输出**: `transcript.json`
 
-### 5. **字幕翻译 (Translation Interface)**
+### 步骤 3: 字幕翻译
+- **功能**: 将识别的文本翻译成中文
+- **模块**: `step030_translation_vad_qwen.py`
+- **输出**: `translation.json`, `subtitles.srt`
 
-此界面用于将识别出的语音转换为字幕并翻译。
+### 步骤 4: 语音合成
+- **功能**: 将翻译后的中文文本转换为语音
+- **模块**: `step040_tts_vox_cpm_qwen.py` 等
+- **输出**: 合成的语音文件
 
-- **Folder**: 设置包含视频的文件夹。
-- **Target Language**: 选择字幕的目标翻译语言。
+### 步骤 5: 视频合成
+- **功能**: 将原视频、合成语音和字幕合成为最终视频
+- **模块**: `step050_synthesize_video.py`
+- **输出**: `video.mp4`
 
-### 6. **语音合成 (TTS Interface)**
+### 步骤 6: 生成视频信息
+- **功能**: 生成视频的元数据信息
+- **模块**: `step060_genrate_info.py`
+- **输出**: 视频信息文件
 
-此界面用于将翻译后的文字转换为语音。
+### 步骤 7: 上传 Bilibili
+- **功能**: 自动将最终视频上传到 Bilibili 平台
+- **条件**: 需要配置 Bilibili 凭据
 
-- **Folder**: 设置包含视频的文件夹。
-- **Force Bytedance**: 选择是否强制使用Bytedance语音合成。
+## 常见问题与解决方案
+### Q: 视频下载失败怎么办？
+A: 检查网络连接，确保 YouTube 可以访问。如果使用代理，需要在配置中设置代理。
 
-### 7. **视频合成 (Synthesize Video Interface)**
+### Q: 处理速度很慢怎么办？
+A: 确保使用了 GPU 加速，降低批量大小，或减少同时处理的任务数。
 
-此界面用于将视频、字幕和语音合成为最终视频。
+### Q: 语音合成质量不好怎么办？
+A: 尝试更换 TTS 模型，或调整 TTS 参数。可以在 WebUI 中选择不同的 TTS 模型。
 
-- **Folder**: 设置包含视频的文件夹。
-- **Subtitles**: 选择是否在视频中包含字幕。
-- **Speed Up**: 设置视频播放速度。
-- **FPS**: 设置视频的帧率。
-- **Resolution**: 选择视频的分辨率。
+### Q: tasks.csv 文件格式错误怎么办？
+A: 确保所有字段都用逗号分隔，字符串用引号括起来。可以使用 Excel 或其他表格软件编辑。
+
+### Q: 程序报错 "ModuleNotFoundError" 怎么办？
+A: 确保所有依赖都已正确安装，可以重新运行 `setup_windows.bat` 或手动安装缺失的模块。
+
+### Q: 如何查看处理日志？
+A: 查看 `logs` 目录下的日志文件，或在命令行中查看输出信息。
 
 ## 技术细节
-
 ### AI 语音识别
-我们的 AI 语音识别功能现在基于 [WhisperX](https://github.com/m-bain/whisperX) 实现。WhisperX 是一个高效的语音识别系统，建立在 OpenAI 开发的 Whisper 系统之上。它不仅能够精确地将语音转换为文本，还能自动对齐时间，并识别每句话的说话人物。这种先进的处理方式不仅提高了处理速度和准确度，还为用户提供了更丰富的信息，例如说话者的识别。
+基于 [WhisperX](https://github.com/m-bain/whisperX) 实现，支持精确的语音到文本转换和说话者分离。
 
 ### 大型语言模型翻译
-我们的翻译功能继续使用 OpenAI API 提供的各种模型，包括官方的 GPT 模型。同时，我们也在利用诸如 [api-for-open-llm](https://github.com/xusenlinzy/api-for-open-llm) 这样的项目，这使我们能够更灵活地整合和利用不同的大型语言模型进行翻译工作，确保翻译质量和效率。
+支持多种翻译模型，包括 OpenAI GPT 系列和本地部署的模型，提供高质量的翻译结果。
 
 ### AI 声音克隆
-在声音克隆方面，我们已经转向使用 [Coqui AI TTS](https://github.com/coqui-ai/TTS)。同时，对于单一说话人的情况，我们采用了火山引擎进行 TTS，以获得更优质的音质。火山引擎的高级技术能够生成极其自然且流畅的语音，适用于各种应用场景，提升了最终产品的整体质量。
+集成了多种语音合成技术，包括 Coqui AI TTS、GPT-SoVITS 等，支持生成自然流畅的中文语音。
 
 ### 视频处理
-在视频处理方面，我们依然强调音视频的同步处理。我们的目标是确保音频与视频画面的完美对齐，并生成准确的字幕，从而为用户提供一个无缝且沉浸式的观看体验。我们的处理流程和技术确保了视频内容的高质量和观看的连贯性。
-
+使用 FFmpeg 进行视频处理，确保音视频同步和高质量的最终输出。
 
 ## 贡献指南
-欢迎对 `YouDub-webui` 进行贡献。您可以通过 [GitHub Issues](https://github.com/liuzhao1225/YouDub-webui/issues) 或 [Pull Request](https://github.com/liuzhao1225/YouDub-webui/pulls) 提交改进建议或报告问题。
+欢迎对 `YouDub-webui` 进行贡献。您可以通过以下方式参与：
+1. 报告问题：在 [GitHub Issues](https://github.com/liuzhao1225/YouDub-webui/issues) 中提交问题
+2. 提交代码：通过 [Pull Request](https://github.com/liuzhao1225/YouDub-webui/pulls) 提交改进
+3. 改进文档：帮助完善 README.md 和其他文档
 
 ## 许可协议
 `YouDub-webui` 遵循 Apache License 2.0。使用本工具时，请确保遵守相关的法律和规定，包括版权法、数据保护法和隐私法。未经原始内容创作者和/或版权所有者许可，请勿使用此工具。
 
 ## 支持与联系方式
-如需帮助或有任何疑问，请通过 [GitHub Issues](https://github.com/liuzhao1225/YouDub-webui/issues) 联系我们。
-加入我们的Discord服务器进行讨论和获取支持：[Discord服务器](https://discord.gg/vbkYnN2Rrm)
-你也可以加入我们的微信群，扫描下方的二维码即可：
+如需帮助或有任何疑问，请通过以下方式联系我们：
+
+- **GitHub Issues**: [提交问题](https://github.com/liuzhao1225/YouDub-webui/issues)
+- **Discord 服务器**: [加入讨论](https://discord.gg/vbkYnN2Rrm)
+- **微信群**: 扫描下方二维码加入
 
 ![WeChat Group](17ab2707ec88ddd8ad3fbd5c705d076b.png)
+
+---
+
+**祝您使用愉快！** 🎉
