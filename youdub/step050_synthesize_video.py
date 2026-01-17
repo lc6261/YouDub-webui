@@ -25,14 +25,16 @@ import time
 from loguru import logger
 
 
-def split_text(input_data, punctuations=['，', '；', '：', '。', '？', '！', '\n', '”']):
+def split_text(input_data, punctuations=['，', '；', '：', '。', '？', '！', '\n', '”', ',', ';', ':', '.', '?', '!', '"']):
     """
     将输入的翻译文本按中文标点符号切分为多个短句，并为每句分配对应的时间区间。
+    同时根据中文切分比例，同步切分英文原文，确保字幕与音频同步。
 
     切分规则：
     - 遇到指定标点时尝试切分
     - 避免过短句子（<5 字符，除非是最后一句）
     - 避免连续标点导致的空句（如 "。！"）
+    - 中英文文本同步切分，确保时间对齐
 
     参数:
         input_data (list): 包含字典的列表，每个字典包含：
@@ -46,8 +48,8 @@ def split_text(input_data, punctuations=['，', '；', '：', '。', '？', '！
     返回:
         list: 切分后的字幕项列表，每项包含：
             - "start", "end": 新的时间区间
-            - "text": 原始文本（不变）
-            - "translation": 切分后的短句
+            - "text": 切分后的英文原文
+            - "translation": 切分后的中文短句
             - "speaker": 说话人
     """
     def is_punctuation(char):
@@ -56,48 +58,145 @@ def split_text(input_data, punctuations=['，', '；', '：', '。', '？', '！
 
     output_data = []
     for item in input_data:
-        start = item["start"]
-        text = item["translation"]
+        # 原始片段信息
+        seg_start = item["start"]
+        seg_end = item["end"]
+        seg_duration = seg_end - seg_start
+        seg_text = item["text"]  # 英文原文
+        seg_translation = item["translation"]  # 中文翻译
         speaker = item.get("speaker", "SPEAKER_00")
-        original_text = item["text"]
-        sentence_start = 0
 
         # 若文本为空，跳过
-        if not text:
+        if not seg_translation:
             continue
 
-        # 假设字符均匀分布，计算每个字符的持续时间
-        duration_per_char = (item["end"] - item["start"]) / len(text)
+        # 计算中英文文本的总长度
+        total_en_chars = len(seg_text)
+        total_zh_chars = len(seg_translation)
 
-        for i, char in enumerate(text):
+        # 中文文本切分
+        zh_sentences = []
+        zh_sentence_start = 0
+        
+        for i, char in enumerate(seg_translation):
             # 不是标点且不是最后一个字符 → 继续
-            if not is_punctuation(char) and i != len(text) - 1:
+            if not is_punctuation(char) and i != len(seg_translation) - 1:
                 continue
 
             # 避免过短句子（少于5字），除非是最后一句
-            if i - sentence_start < 5 and i != len(text) - 1:
+            if i - zh_sentence_start < 5 and i != len(seg_translation) - 1:
                 continue
 
             # 避免在连续标点处分割（如 "！？"），跳过后一个标点
-            if i < len(text) - 1 and is_punctuation(text[i + 1]):
+            if i < len(seg_translation) - 1 and is_punctuation(seg_translation[i + 1]):
                 continue
 
-            # 提取当前句子
-            sentence = text[sentence_start:i + 1]
-            sentence_end = start + duration_per_char * len(sentence)
-
+            # 提取当前中文句子
+            zh_sentence = seg_translation[zh_sentence_start:i + 1]
+            zh_sentences.append({
+                "text": zh_sentence,
+                "char_count": len(zh_sentence),
+                "start_pos": zh_sentence_start,
+                "end_pos": i + 1
+            })
+            
+            # 更新下一句的起始位置
+            zh_sentence_start = i + 1
+        
+        # 处理剩余文本
+        if zh_sentence_start < len(seg_translation):
+            zh_sentence = seg_translation[zh_sentence_start:]
+            zh_sentences.append({
+                "text": zh_sentence,
+                "char_count": len(zh_sentence),
+                "start_pos": zh_sentence_start,
+                "end_pos": len(seg_translation)
+            })
+        
+        # 根据中文句子的字符比例，切分英文原文
+        def find_english_sentence_boundary(text, start_pos, target_pos, max_search_range=100):
+            """
+            在目标位置附近寻找合适的英文句子边界
+            优先考虑：句号、问号、感叹号、分号、冒号、换行符
+            其次考虑：逗号、空格
+            确保不截断单词
+            """
+            if target_pos >= len(text):
+                return len(text)
+            
+            # 定义英文句子结束标点的优先级
+            primary_punct = ['.', '?', '!', ';', ':', '\n']
+            secondary_punct = [',', ' ']
+            
+            # 确保不会在单词中间截断
+            def is_word_char(c):
+                return c.isalnum() or c == "'"
+            
+            # 从目标位置向前搜索，寻找最近的句子边界
+            for i in range(target_pos, max(start_pos, target_pos - max_search_range), -1):
+                if text[i:i+1] in primary_punct:
+                    return i + 1
+            
+            # 如果没有找到主要标点，尝试次要标点
+            for i in range(target_pos, max(start_pos, target_pos - max_search_range), -1):
+                if text[i:i+1] in secondary_punct:
+                    return i + 1
+            
+            # 如果还是没有找到，确保不截断单词
+            # 检查目标位置是否在单词中间
+            if target_pos < len(text) - 1 and is_word_char(text[target_pos]) and is_word_char(text[target_pos+1]):
+                # 从目标位置向后搜索，寻找单词结束
+                for i in range(target_pos, min(len(text), target_pos + max_search_range)):
+                    if not is_word_char(text[i:i+1]):
+                        return i
+            
+            # 如果还是没有找到，返回目标位置
+            return target_pos
+        
+        current_time = seg_start
+        
+        for i, zh_sent in enumerate(zh_sentences):
+            # 计算中文句子在整个片段中的字符比例
+            zh_char_ratio = zh_sent["char_count"] / total_zh_chars
+            
+            # 根据比例计算英文句子的字符范围
+            en_start_pos = int(total_en_chars * (zh_sent["start_pos"] / total_zh_chars))
+            en_end_pos = int(total_en_chars * (zh_sent["end_pos"] / total_zh_chars))
+            
+            # 确保英文句子至少有一个字符
+            if en_start_pos == en_end_pos:
+                en_end_pos = min(en_start_pos + 1, total_en_chars)
+            
+            # 寻找合适的英文句子边界
+            if i < len(zh_sentences) - 1:  # 不是最后一句
+                en_end_pos = find_english_sentence_boundary(seg_text, en_start_pos, en_end_pos)
+            else:  # 最后一句，包含所有剩余文本
+                en_end_pos = total_en_chars
+            
+            # 提取英文句子
+            en_sentence = seg_text[en_start_pos:en_end_pos].strip()
+            
+            # 特殊处理：如果是最后一句，确保包含所有剩余文本
+            if i == len(zh_sentences) - 1:
+                en_sentence = seg_text[en_start_pos:].strip()
+                sentence_end = seg_end
+            else:
+                # 计算当前句子的实际字符比例
+                actual_char_ratio = (en_end_pos - en_start_pos) / total_en_chars
+                # 根据实际字符比例调整时间
+                sentence_end = current_time + (seg_duration * actual_char_ratio)
+            
             # 保存分段结果
             output_data.append({
-                "start": round(start, 3),
+                "start": round(current_time, 3),
                 "end": round(sentence_end, 3),
-                "text": original_text,
-                "translation": sentence,
+                "text": en_sentence,
+                "translation": zh_sent["text"].strip(),
                 "speaker": speaker
             })
-
-            # 更新下一句的起始时间与字符位置
-            start = sentence_end
-            sentence_start = i + 1
+            
+            # 更新下一句的起始时间和位置
+            current_time = sentence_end
 
     return output_data
 
@@ -128,6 +227,7 @@ def generate_srt(translation, srt_path, speed_up=1, max_line_char=30):
     - 对翻译文本进行切分（调用 split_text）
     - 根据播放速度（speed_up）调整时间戳
     - 自动换行（每行不超过 max_line_char 字符）
+    - 生成中英文双语字幕，英文在上，中文在下
 
     参数:
         translation (list): 原始翻译数据（未切分）
@@ -141,20 +241,87 @@ def generate_srt(translation, srt_path, speed_up=1, max_line_char=30):
             # 应用速度调整：原始时间 / speed_up
             start = format_timestamp(line['start'] / speed_up)
             end = format_timestamp(line['end'] / speed_up)
-            text = line['translation']
-
-            # 自动换行：尽量均分字符到多行，每行不超过 max_line_char
-            line_count = len(text) // (max_line_char + 1) + 1
-            avg_chars_per_line = min(round(len(text) / line_count), max_line_char)
-            wrapped_text = '\n'.join([
-                text[j * avg_chars_per_line:(j + 1) * avg_chars_per_line]
-                for j in range(line_count)
-            ])
+            
+            # 获取英文原文和中文翻译
+            english_text = line['text']
+            chinese_text = line['translation']
+            
+            # 改进的英文自动换行算法，确保不会在单词中间截断
+            def wrap_text_english(text, max_line_length):
+                """
+                英文文本自动换行，确保单词完整性
+                """
+                if not text:
+                    return ""
+                
+                words = text.split(' ')
+                lines = []
+                current_line = []
+                current_length = 0
+                
+                for word in words:
+                    # 计算单词长度（考虑空格）
+                    word_length = len(word)
+                    if current_length + word_length + (1 if current_line else 0) <= max_line_length:
+                        # 单词可以加入当前行
+                        current_line.append(word)
+                        current_length += word_length + (1 if current_line else 0)
+                    else:
+                        # 单词不能加入当前行，开始新行
+                        lines.append(' '.join(current_line))
+                        current_line = [word]
+                        current_length = word_length
+                
+                # 处理最后一行
+                if current_line:
+                    lines.append(' '.join(current_line))
+                
+                return '\n'.join(lines)
+            
+            # 中文自动换行（按字符）
+            def wrap_text_chinese(text, max_line_length):
+                """
+                中文文本自动换行，按字符拆分
+                """
+                if not text:
+                    return ""
+                
+                lines = []
+                for i in range(0, len(text), max_line_length):
+                    lines.append(text[i:i+max_line_length])
+                
+                return '\n'.join(lines)
+            
+            # 处理英文原文的自动换行
+            if english_text:
+                wrapped_english = wrap_text_english(english_text, max_line_char)
+            else:
+                wrapped_english = ''
+            
+            # 处理中文翻译的自动换行
+            if chinese_text:
+                wrapped_chinese = wrap_text_chinese(chinese_text, max_line_char)
+            else:
+                wrapped_chinese = ''
+            
+            # 组合双语字幕，英文在上，中文在下
+            if wrapped_english and wrapped_chinese:
+                # 英文和中文都有
+                bilingual_text = f'{wrapped_english}\n{wrapped_chinese}'
+            elif wrapped_english:
+                # 只有英文
+                bilingual_text = wrapped_english
+            elif wrapped_chinese:
+                # 只有中文
+                bilingual_text = wrapped_chinese
+            else:
+                # 都没有，跳过
+                continue
 
             # 写入 SRT 格式
             f.write(f'{i + 1}\n')
             f.write(f'{start} --> {end}\n')
-            f.write(f'{wrapped_text}\n\n')
+            f.write(f'{bilingual_text}\n\n')
 
 
 def get_aspect_ratio(video_path):
@@ -302,8 +469,8 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
     width, height = convert_resolution(aspect_ratio, resolution)
     resolution_str = f'{width}x{height}'
 
-    # 计算字幕字体大小（自适应）
-    font_size = int(width / 128)
+    # 计算字幕字体大小（自适应）- 为双语字幕调整字体大小
+    font_size = int(width / 140)  # 双语字幕需要更小的字体以适应垂直空间
     outline = max(1, int(round(font_size / 8)))  # 确保至少为1
 
     # FFmpeg 滤镜：加速 + 字幕
@@ -325,7 +492,8 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
         f"subtitles={srt_path}:" 
         f"force_style='FontName=Arial,FontSize={font_size}," 
         f"PrimaryColour=&HFFFFFF,OutlineColour=&H000000," 
-        f"Outline={outline},WrapStyle=2'"
+        f"Outline={outline},WrapStyle=2,MarginV={int(height * 0.05)}," 
+        f"Alignment=2,Bold=1'"
     )
 
     if subtitles:

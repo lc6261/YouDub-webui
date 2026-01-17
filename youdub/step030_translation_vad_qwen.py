@@ -106,31 +106,67 @@ def analyze_transcript(transcript: List[Dict], target_language: str = '简体中
 # ===== 术语提取与管理（增强版）=====
 class TerminologyManager:
     def __init__(self):
-        self.terms = {}
+        self.terms = {}  # 主术语表
+        self.domain_terms = {}  # 按领域分类的术语
+        self.term_priority = {}  # 术语优先级（0-100，默认50）
+        
+        # 扩展领域关键词
         self.domain_keywords = {
             "AI": ["transformer", "attention", "neural network", "GPT", "LLM", 
-                   "embedding", "tokenizer", "fine-tuning", "reinforcement learning"],
+                   "embedding", "tokenizer", "fine-tuning", "reinforcement learning",
+                   "deep learning", "machine learning", "model", "prompt", "inference",
+                   "training", "dataset", "hyperparameter", "accuracy", "precision"],
             "Math": ["derivative", "integral", "matrix", "vector", "function",
-                    "equation", "theorem", "proof", "optimization"],
+                    "equation", "theorem", "proof", "optimization", "calculus",
+                    "algebra", "geometry", "statistics", "probability", "algorithm"],
             "Programming": ["API", "function", "variable", "algorithm", "database",
-                          "framework", "compiler", "debugger", "deployment"],
+                          "framework", "compiler", "debugger", "deployment",
+                          "code", "syntax", "semantics", "runtime", "memory",
+                          "performance", "security", "version", "repository"],
             "Travel": [
                 "destination", "travel", "visit", "tour", "trip", "journey", "vacation",
                 "backpack", "explore", "adventure", "culture", "heritage", "UNESCO",
-                "landmark", "beach", "mountain", "resort", "itinerary", "passport"
-            ]
+                "landmark", "beach", "mountain", "resort", "itinerary", "passport",
+                "flight", "hotel", "restaurant", "local", "attraction", "guide"
+            ],
+            "Science": ["experiment", "hypothesis", "theory", "research", "discovery",
+                        "observation", "data", "analysis", "conclusion", "evidence",
+                        "methodology", "variable", "control", "sample", "result"],
+            "Technology": ["device", "software", "hardware", "system", "network",
+                          "internet", "computer", "smartphone", "application", "interface",
+                          "user experience", "design", "development", "innovation", "trend"],
+            "Education": ["learning", "teaching", "student", "teacher", "curriculum",
+                         "course", "lesson", "assessment", "examination", "grade",
+                         "knowledge", "skill", "competency", "pedagogy", "method"],
+            "Business": ["market", "economy", "finance", "investment", "profit",
+                        "loss", "revenue", "cost", "strategy", "management",
+                        "entrepreneur", "company", "industry", "competition", "customer"]
         }
     
     def detect_domains(self, text: str) -> List[str]:
+        """
+        检测文本所属领域，返回置信度最高的前2个领域
+        """
         detected = []
         text_lower = text.lower()
+        domain_scores = {}
+        
+        # 计算每个领域的匹配得分
         for domain, keywords in self.domain_keywords.items():
             score = sum(1 for kw in keywords if kw.lower() in text_lower)
-            if score >= 2:
-                detected.append(domain)
+            if score > 0:
+                domain_scores[domain] = score
+        
+        # 按得分排序，返回前2个领域
+        sorted_domains = sorted(domain_scores.items(), key=lambda x: x[1], reverse=True)
+        detected = [domain for domain, score in sorted_domains[:2]]
+        
         return detected or ["通用"]
     
     def extract_terms(self, text: str, target_language: str = '简体中文') -> Dict[str, str]:
+        """
+        增强的术语提取功能
+        """
         domains = self.detect_domains(text)
         logger.info(f"🔍 检测到领域: {domains}")
         
@@ -138,17 +174,22 @@ class TerminologyManager:
         prompt = f"""你是专业术语提取专家。请从以下{domain_desc}领域的文本中提取关键术语。
 
 要求：
-1. 提取技术术语、专有名词、关键概念
-2. 每个术语提供准确的{target_language}翻译
-3. 输出标准JSON格式
+1. 提取技术术语、专有名词、关键概念、人名、地名、组织名
+2. 每个术语提供准确、专业的{target_language}翻译
+3. 术语翻译需保持一致性和准确性
+4. 输出标准JSON格式
+5. 不要包含过于通用的词汇
+6. 提供5-20个最关键的术语
 
 文本（节选）:
-{text[:1500]}
+{text[:2000]}
 
 输出格式（严格JSON）：
 {{
   "transformer": "Transformer模型",
-  "attention mechanism": "注意力机制"
+  "attention mechanism": "注意力机制",
+  "OpenAI": "OpenAI",
+  "GPT-4": "GPT-4"
 }}"""
 
         try:
@@ -156,11 +197,11 @@ class TerminologyManager:
             response = client.chat.completions.create(
                 model=MODEL_NAME,
                 messages=[
-                    {"role": "system", "content": "你是专业术语提取专家，精通技术领域翻译。"},
+                    {"role": "system", "content": "你是专业术语提取专家，精通多领域术语翻译，能够准确识别和翻译各种专有名词和技术术语。"},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.2,
-                max_tokens=800
+                temperature=0.1,  # 降低温度，提高术语准确性
+                max_tokens=1000  # 增加最大token数
             )
             
             raw = response.choices[0].message.content.strip()
@@ -168,30 +209,79 @@ class TerminologyManager:
 
             try:
                 terms = json.loads(raw)
-            except:
+            except json.JSONDecodeError:
                 terms = {}
+                # 更健壮的正则表达式匹配
                 matches = re.findall(r'"([^"]+)"\s*:\s*"([^"]+)"', raw)
                 for en, zh in matches:
-                    if en and zh:
+                    if en and zh and len(en) > 1:  # 过滤过短的术语
                         terms[en] = zh
 
-            self.terms.update(terms)
-            logger.info(f"✅ 提取到 {len(terms)} 个关键术语")
-            return terms
+            # 过滤无效术语
+            filtered_terms = {}
+            for term, translation in terms.items():
+                # 过滤过于通用的词汇
+                if len(term) > 1 and not term.lower() in ["the", "and", "or", "but", "in", "on", "at", "to", "for", "with"]:
+                    filtered_terms[term] = translation
+            
+            # 更新术语表
+            self.terms.update(filtered_terms)
+            
+            # 按领域存储术语
+            for domain in domains:
+                if domain not in self.domain_terms:
+                    self.domain_terms[domain] = {}
+                self.domain_terms[domain].update(filtered_terms)
+            
+            logger.info(f"✅ 提取到 {len(filtered_terms)} 个关键术语")
+            return filtered_terms
             
         except Exception as e:
             logger.warning(f"⚠️ 术语提取失败: {e}")
             return {}
     
     def apply_terms(self, text: str) -> str:
+        """
+        增强的术语应用机制
+        1. 按术语长度排序，优先匹配长术语
+        2. 考虑术语上下文
+        3. 提高匹配准确性
+        """
         if not self.terms:
             return text
+        
+        # 按术语长度排序，优先匹配长术语
         sorted_terms = sorted(self.terms.items(), key=lambda x: len(x[0]), reverse=True)
+        
+        # 构建正则表达式，考虑单词边界
         for en, zh in sorted_terms:
-            if en and zh:
-                pattern = r'\b' + re.escape(en) + r'\b'
-                text = re.sub(pattern, zh, text, flags=re.IGNORECASE)
+            if not en or not zh:
+                continue
+            
+            # 构建更健壮的正则表达式，考虑大小写和单词边界
+            pattern = r'\b' + re.escape(en) + r'\b'
+            
+            # 使用re.IGNORECASE进行大小写不敏感匹配
+            text = re.sub(pattern, zh, text, flags=re.IGNORECASE)
+        
         return text
+    
+    def add_custom_term(self, term: str, translation: str, priority: int = 50, domain: str = "通用"):
+        """
+        添加自定义术语
+        """
+        self.terms[term] = translation
+        self.term_priority[term] = priority
+        
+        if domain not in self.domain_terms:
+            self.domain_terms[domain] = {}
+        self.domain_terms[domain][term] = translation
+    
+    def get_terms_by_domain(self, domain: str) -> Dict[str, str]:
+        """
+        获取特定领域的术语
+        """
+        return self.domain_terms.get(domain, {})
 
 
 # ===== 高级翻译器 =====
@@ -205,34 +295,62 @@ class AdvancedTranslator:
             {
                 "source": "So basically what we're doing here is taking the derivative of the loss function.",
                 "target": "所以基本上我们在这里做的就是计算损失函数的导数。",
-                "note": "保留所以、基本上等口语化表达"
+                "note": "保留所以、基本上等口语化表达，数学术语准确翻译"
             },
             {
                 "source": "This is a really cool technique that allows us to...",
                 "target": "这是一个非常酷的技术，它让我们能够……",
-                "note": "\"really cool\" 翻译为 非常酷 而非 真的很酷 "
+                "note": "\"really cool\" 翻译为 非常酷 而非 真的很酷，保持口语化风格"
             },
             {
                 "source": "Now, you might be wondering why we use attention here.",
                 "target": "现在，你可能会想知道为什么我们在这里使用注意力机制。",
-                "note": "保留 你可能会想 等对话感"
+                "note": "保留 你可能会想 等对话感，技术术语准确翻译"
+            },
+            {
+                "source": "The transformer architecture has revolutionized natural language processing.",
+                "target": "Transformer架构已经彻底改变了自然语言处理领域。",
+                "note": "技术术语准确翻译，保持句子流畅性"
+            },
+            {
+                "source": "In conclusion, this study demonstrates the effectiveness of our approach.",
+                "target": "总之，这项研究证明了我们方法的有效性。",
+                "note": "学术论文风格，使用正式但流畅的表达"
+            },
+            {
+                "source": "Let's take a closer look at the results from our experiment.",
+                "target": "让我们仔细看看我们实验的结果。",
+                "note": "使用祈使句，保持亲和力"
+            },
+            {
+                "source": "The model achieved an accuracy of 95.2% on the test dataset.",
+                "target": "该模型在测试数据集上达到了95.2%的准确率。",
+                "note": "数据和百分比的准确表达"
             }
         ]
     
-    def build_translation_prompt(self, text, context_prev, context_next, terms, target_duration, target_language='简体中文'):
+    def build_translation_prompt(self, text, context_prev, context_next, terms, target_duration, target_language='简体中文', context_prev_translations=None):
         max_chars = int(target_duration * 4.5)
-        term_list = "\n".join([f"- {en} → {zh}" for en, zh in list(terms.items())[:15]])
+        term_list = "\n".join([f"- {en} → {zh}" for en, zh in list(terms.items())[:20]])  # 增加术语列表长度
         examples = "\n\n".join([
             f"原文: {ex['source']}\n译文: {ex['target']}\n注意: {ex['note']}"
-            for ex in self.few_shot_examples[:2]
+            for ex in self.few_shot_examples[:3]  # 增加示例数量
         ])
         
         context = []
         for i, t in enumerate(context_prev, 1):
-            if t: context.append(f"前{i}句: {t}")
-        context.append(f"【当前句】: {text}")
+            if t: context.append(f"前{i}句原文: {t}")
+        
+        # 添加前一句的翻译作为上下文，增强连贯性
+        if context_prev_translations:
+            for i, t in enumerate(reversed(context_prev_translations), 1):
+                if t: context.append(f"前{i}句译文: {t}")
+        
+        context.append(f"【当前句原文】: {text}")
+        
         for i, t in enumerate(context_next, 1):
-            if t: context.append(f"后{i}句: {t}")
+            if t: context.append(f"后{i}句原文: {t}")
+        
         context_str = "\n".join(context)
         
         term_display = term_list if term_list else "无特定术语"
@@ -242,7 +360,9 @@ class AdvancedTranslator:
 1. **自然流畅**: 符合{target_language}表达习惯，不要逐字直译
 2. **口语化**: 保留"所以"、"其实"、"那么"等语气词
 3. **准确性**: 严格使用术语表，保持全文一致
-4. **时长匹配**: 译文约{target_duration:.1f}秒，最多{max_chars}个汉字
+4. **上下文连贯**: 参考前后文，确保翻译连贯自然
+5. **领域适配**: 根据内容调整翻译风格（如科技、教育、娱乐等）
+6. **时长匹配**: 译文约{target_duration:.1f}秒，最多{max_chars}个汉字
 
 # 术语表（必须严格遵守）
 {term_display}
@@ -255,20 +375,20 @@ class AdvancedTranslator:
 
 # 输出要求
 严格输出JSON格式: {{"translation": "译文"}}
-只翻译【当前句】，不要翻译上下文！"""
+只翻译【当前句原文】，不要翻译上下文！"""
     
-    def translate_first_pass(self, text, context_prev, context_next, terms, target_duration, target_language='简体中文'):
-        prompt = self.build_translation_prompt(text, context_prev, context_next, terms, target_duration, target_language)
+    def translate_first_pass(self, text, context_prev, context_next, terms, target_duration, target_language='简体中文', context_prev_translations=None):
+        prompt = self.build_translation_prompt(text, context_prev, context_next, terms, target_duration, target_language, context_prev_translations)
         try:
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "你是专业视频翻译专家。严格按照JSON格式输出，使用口语化表达，保持术语一致性。"},
+                    {"role": "system", "content": "你是专业视频翻译专家。严格按照JSON格式输出，使用口语化表达，保持术语一致性和上下文连贯性。"},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3,
-                top_p=0.9,
-                max_tokens=250
+                temperature=0.2,  # 降低温度，提高一致性
+                top_p=0.8,  # 降低top_p，减少随机性
+                max_tokens=300  # 增加最大token数
             )
             raw = response.choices[0].message.content.strip()
             try:
@@ -281,13 +401,22 @@ class AdvancedTranslator:
             logger.warning(f"⚠️ 第一遍翻译失败: {e}")
             return ""
     
-    def refine_translation(self, original, first_translation, target_duration, target_language='简体中文'):
+    def refine_translation(self, original, first_translation, target_duration, target_language='简体中文', context_prev=None, context_next=None):
         if not first_translation:
             return original
         max_chars = int(target_duration * 4.5)
         current_chars = len(first_translation)
+        
+        # 构建上下文信息
+        context_info = ""
+        if context_prev:
+            context_info += f"前句原文: {context_prev[-1]}\n"
+        if context_next:
+            context_info += f"后句原文: {context_next[0]}\n"
+        
         prompt = f"""你是翻译质量审校专家。请优化以下翻译，使其更加自然流畅。
 
+{context_info}
 原文: {original}
 
 初译: {first_translation}
@@ -295,19 +424,21 @@ class AdvancedTranslator:
 优化要求:
 1. 保持原意不变
 2. 更加口语化、自然
-3. 长度控制在 {max_chars} 个汉字内（当前 {current_chars} 字）
-4. 去除冗余，使用更简洁的表达
+3. 与上下文保持连贯
+4. 长度控制在 {max_chars} 个汉字内（当前 {current_chars} 字）
+5. 去除冗余，使用更简洁的表达
+6. 确保专业术语使用正确
 
 输出JSON: {{"refined": "优化后的译文"}}"""
         try:
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "你是专业翻译审校专家。"},
+                    {"role": "system", "content": "你是专业翻译审校专家。严格按照JSON格式输出，优化翻译使其更加自然、连贯。"},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.5,
-                max_tokens=200
+                temperature=0.4,
+                max_tokens=250
             )
             raw = response.choices[0].message.content.strip()
             try:
@@ -321,24 +452,78 @@ class AdvancedTranslator:
             logger.warning(f"⚠️ 翻译优化失败: {e}")
             return first_translation
     
-    def translate_with_quality_check(self, text, context_prev, context_next, terms, target_duration, target_language='简体中文'):
-        first_pass = self.translate_first_pass(text, context_prev, context_next, terms, target_duration, target_language)
+    def translate_with_quality_check(self, text, context_prev, context_next, terms, target_duration, target_language='简体中文', context_prev_translations=None):
+        first_pass = self.translate_first_pass(text, context_prev, context_next, terms, target_duration, target_language, context_prev_translations)
         if not first_pass:
             return text, False
-        refined = self.refine_translation(text, first_pass, target_duration, target_language)
+        refined = self.refine_translation(text, first_pass, target_duration, target_language, context_prev, context_next)
         final = self.term_manager.apply_terms(refined)
         is_good = self._quality_check(text, final, target_duration)
         return final, is_good
     
     def _quality_check(self, source, target, target_duration):
+        """
+        增强的质量检查机制，增加更多质量检查维度
+        """
+        # 基本检查
         if not target or len(target) < 3:
+            logger.warning(f"⚠️ 翻译过短: {target}")
             return False
+        
+        # 长度检查：确保翻译长度与音频时长匹配
         max_chars = int(target_duration * 5.0)
+        min_chars = max(1, int(target_duration * 0.5))
         if len(target) > max_chars:
+            logger.warning(f"⚠️ 翻译过长: {len(target)}/{max_chars}字符")
             return False
+        if len(target) < min_chars:
+            logger.warning(f"⚠️ 翻译过短: {len(target)}/{min_chars}字符")
+            return False
+        
+        # 英文比例检查：确保翻译以中文为主
         english_chars = sum(1 for c in target if c.isalpha() and ord(c) < 128)
-        if english_chars > len(target) * 0.3:
+        if english_chars > len(target) * 0.4:
+            logger.warning(f"⚠️ 英文比例过高: {english_chars}/{len(target)}字符")
             return False
+        
+        # 语法检查：避免明显的语法错误
+        if target.count('。') > 3:  # 避免过多句子
+            logger.warning(f"⚠️ 句子过多: {target}")
+            return False
+        
+        # 检查基本标点符号使用
+        if target and target[-1] not in ['。', '！', '？', '…', '；', '：', '”', '']:
+            logger.warning(f"⚠️ 缺少句末标点: {target}")
+            return False
+        
+        # 检查过度重复
+        if len(target) > 10:
+            # 检查是否有连续重复的字符
+            for i in range(len(target) - 2):
+                if target[i] == target[i+1] == target[i+2]:
+                    logger.warning(f"⚠️ 过度重复: {target}")
+                    return False
+        
+        # 检查是否有明显的漏译
+        source_words = len(source.split())
+        target_words = len(target)
+        if source_words > 10 and target_words < source_words * 0.3:
+            logger.warning(f"⚠️ 可能漏译: 原文{source_words}词，译文{target_words}字")
+            return False
+        
+        # 检查是否有明显的过度翻译
+        if target_words > source_words * 3:
+            logger.warning(f"⚠️ 可能过度翻译: 原文{source_words}词，译文{target_words}字")
+            return False
+        
+        # 检查术语一致性（简单检查：确保至少有一个术语被正确翻译）
+        if self.term_manager.terms and any(term.lower() in source.lower() for term in self.term_manager.terms):
+            # 检查是否有术语被正确翻译
+            translated_terms = sum(1 for term, trans in self.term_manager.terms.items() if trans in target)
+            if translated_terms == 0:
+                logger.warning(f"⚠️ 术语未被正确翻译: {source} → {target}")
+                # 不是致命错误，继续检查其他维度
+        
         return True
 
 
@@ -436,9 +621,16 @@ def translate_advanced(folder: str, target_language: str = '简体中文') -> bo
         transcript = json.load(f)
     logger.info(f"📄 加载了 {len(transcript)} 条字幕")
     
-    global_terms = analyze_transcript(transcript, target_language)
+    # 获取视频领域信息
+    full_text = ' '.join(line.get('text', '') for line in transcript[:100])  # 使用前100条字幕检测领域
+    
+    # 初始化翻译器并检测领域
     translator = AdvancedTranslator()
-    full_text = ' '.join(line.get('text', '') for line in transcript)
+    domains = translator.term_manager.detect_domains(full_text)
+    logger.info(f"🌐 视频领域: {domains}")
+    
+    # 提取术语
+    global_terms = analyze_transcript(transcript, target_language)
     domain_terms = translator.term_manager.extract_terms(full_text, target_language)
     all_terms = {**domain_terms, **global_terms}
     translator.term_manager.terms = all_terms
@@ -457,8 +649,15 @@ def translate_advanced(folder: str, target_language: str = '简体中文') -> bo
             quality_flags.append(False)
             continue
         
-        context_prev = [transcript[j].get('text', '') for j in range(max(0, i-2), i)]
-        context_next = [transcript[j].get('text', '') for j in range(i+1, min(len(transcript), i+3))]
+        # 增强上下文理解：扩大上下文窗口
+        context_prev = [transcript[j].get('text', '') for j in range(max(0, i-3), i)]  # 前3句
+        context_next = [transcript[j].get('text', '') for j in range(i+1, min(len(transcript), i+4))]  # 后3句
+        
+        # 添加前一句的翻译作为上下文，增强连贯性
+        context_prev_translations = []
+        for j in range(max(0, i-3), i):
+            if j < len(translations) and translations[j]:
+                context_prev_translations.append(translations[j])
         
         start = float(line.get('start', 0))
         end = float(line.get('end', 0))
@@ -470,7 +669,7 @@ def translate_advanced(folder: str, target_language: str = '简体中文') -> bo
         
         translation, is_good = translator.translate_with_quality_check(
             text, context_prev, context_next, all_terms,
-            target_duration, target_language
+            target_duration, target_language, context_prev_translations
         )
         
         translations.append(translation)

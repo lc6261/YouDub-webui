@@ -2,7 +2,8 @@ import json
 import os
 import time
 from loguru import logger
-from .step000_video_downloader import get_info_list_from_url, download_single_video, get_target_folder
+# 注释掉缺失的模块引用，使用新的下载方式
+# from .step000_video_downloader import get_info_list_from_url, download_single_video, get_target_folder
 from .step010_demucs_vr import separate_all_audio_under_folder, init_demucs
 from .step020_whisperx import transcribe_all_audio_under_folder, init_whisperx
 from .step030_translation import translate_all_transcript_under_folder
