@@ -1,6 +1,8 @@
 import json
 import os
+import sys
 import time
+import argparse
 from loguru import logger
 from .step000_video_downloader_csv import get_video_infos, download_and_merge, _get_output_path, sanitize_title, update_csv_file, initialize_csv_file
 from .step010_demucs_vr import separate_all_audio_under_folder, init_demucs, separate_audio, unload_demucs_model
@@ -31,6 +33,7 @@ def get_info_list_from_url(urls, num_videos=5, status_mask='1111111', csv_path=N
     return video_infos
 
 
+
 def download_single_video(info, root_folder, resolution='1080p'):
     """下载单个视频"""
     try:
@@ -53,6 +56,7 @@ def download_single_video(info, root_folder, resolution='1080p'):
     except Exception as e:
         logger.error(f"下载视频失败: {e}")
         return None
+
 
 
 def get_target_folder(info, root_folder):
@@ -239,6 +243,7 @@ def process_video(info, root_folder, resolution, demucs_model, device, shifts, w
     return False
 
 
+
 def do_everything(root_folder, url, num_videos=5, resolution='1080p', demucs_model='htdemucs_ft', device='auto', shifts=5, whisper_model='large-v3', whisper_download_root='models/ASR/whisper', whisper_batch_size=32, whisper_diarization=True, whisper_min_speakers=None, whisper_max_speakers=None, translation_target_language='简体中文', subtitles=True, speed_up=1.05, fps=30, target_resolution='1080p', max_workers=3, max_retries=5):
     success_list = []
     fail_list = []
@@ -328,3 +333,125 @@ def do_everything(root_folder, url, num_videos=5, resolution='1080p', demucs_mod
         logger.warning(f'卸载模型时出错: {e}')
 
     return f'Success: {len(success_list)}\nFail: {len(fail_list)}'
+
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="YouTube 视频自动翻译配音流水线",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  # 处理 tasks.csv 中的所有视频（完整流程）
+  python do_everything.py
+  
+  # 从第3步（翻译）开始执行
+  python do_everything.py --step 3
+  
+  # 只执行前3步（下载+分离+识别）
+  python do_everything.py --end 3
+  
+  # 使用自定义配置
+  python do_everything.py --model medium --lang 英语
+  
+  # 处理单个视频
+  python do_everything.py --url "https://www.youtube.com/watch?v=xxx"
+        """
+    )
+    
+    parser.add_argument(
+        "--step", type=int, default=0,
+        help="从指定步骤开始执行（0-5，默认: 0）"
+    )
+    parser.add_argument(
+        "--end", type=int, default=None,
+        help="执行到指定步骤结束（不含）"
+    )
+    parser.add_argument(
+        "--folder", type=str, default="videos",
+        help="视频根目录（默认: videos）"
+    )
+    parser.add_argument(
+        "--model", type=str, default="large-v3",
+        choices=["large-v3", "medium", "small"],
+        help="Whisper 模型（默认: large-v3）"
+    )
+    parser.add_argument(
+        "--lang", type=str, default="简体中文",
+        help="目标语言（默认: 简体中文）"
+    )
+    parser.add_argument(
+        "--no-subtitles", action="store_true",
+        help="不嵌入字幕"
+    )
+    parser.add_argument(
+        "--speed", type=float, default=1.05,
+        help="视频加速倍数（默认: 1.05）"
+    )
+    parser.add_argument(
+        "--url", type=str, default=None,
+        help="处理单个视频URL"
+    )
+    
+    args = parser.parse_args()
+    
+    # 配置日志
+    logger.remove()
+    logger.add(
+        sys.stderr,
+        format="<green>{time:MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
+        level="INFO"
+    )
+    logger.add(
+        "pipeline.log",
+        rotation="10 MB",
+        retention="7 days",
+        encoding="utf-8",
+        level="DEBUG"
+    )
+    
+    try:
+        logger.info("\n" + "🎬"*30)
+        logger.info("YouTube 视频翻译配音流水线启动")
+        logger.info("🎬"*30 + "\n")
+        
+        # 根据命令行参数设置 status_mask
+        status_mask = "1111111"
+        if args.end is not None:
+            # 如果指定了结束步骤，则将该步骤之后的步骤标记为不执行
+            status_mask = "1" * args.end + "0" * (7 - args.end)
+        if args.step > 0:
+            # 如果指定了开始步骤，则将该步骤之前的步骤标记为不执行
+            status_mask = "0" * args.step + status_mask[args.step:]
+        
+        # 准备参数
+        url = args.url or "tasks.csv"  # 如果没有指定URL，则使用tasks.csv
+        
+        # 调用 do_everything 函数处理视频
+        result = do_everything(
+            root_folder=args.folder,
+            url=url,
+            num_videos=5,  # 默认处理5个视频
+            resolution="1080p",
+            whisper_model=args.model,
+            translation_target_language=args.lang,
+            subtitles=not args.no_subtitles,
+            speed_up=args.speed,
+            target_resolution="1080p"
+        )
+        
+        logger.info("\n" + "🎉"*30)
+        logger.success("所有步骤执行完成！")
+        logger.info(f"📋 处理结果: {result}")
+        logger.info("🎉"*30 + "\n")
+        
+        sys.exit(0)
+        
+    except Exception as e:
+        logger.error(f"💥 流水线执行失败: {e}")
+        logger.exception("详细错误:")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
