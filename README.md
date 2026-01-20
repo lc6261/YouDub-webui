@@ -69,8 +69,15 @@ YouDub-webui/
 ├── voice/                           # 语音克隆样本目录
 ├── whisper.cpp/                     # Whisper C++ 实现
 ├── youdub/                          # 核心功能模块
-│   ├── run_pipeline.py              # 处理管道主程序
+│   ├── do_everything.py             # 唯一入口点，实现完整流程
 │   ├── step000_video_downloader_csv.py # 视频下载模块
+│   ├── step010_demucs_vr.py         # 音频分离模块
+│   ├── step020_whisperx_silero_vad.py # 语音识别模块
+│   ├── step030_translation_vad_qwen.py # 翻译模块
+│   ├── step031_extract_speaker_clips.py # 说话人克隆音频提取
+│   ├── step040_tts_vox_cpm_qwen.py # 语音合成模块
+│   ├── step050_synthesize_video.py # 视频合成模块
+│   ├── step060_genrate_info.py      # 视频信息生成模块
 │   └── ...                          # 其他处理步骤模块
 ├── .env                             # 环境配置文件
 ├── .env.example                     # 环境配置示例
@@ -206,7 +213,8 @@ YouDub-webui/
    ```
 3. 运行处理管道:
    ```bash
-   python -m youdub.run_pipeline --use-task-steps
+   # 使用 do_everything.py 作为唯一入口点
+   python -m youdub.do_everything --root videos --url tasks.csv
    ```
 4. 程序会自动读取 `tasks.csv` 并处理所有待处理任务
 
